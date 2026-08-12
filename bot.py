@@ -100,12 +100,15 @@ async def get_ai_reply(text: str) -> str:
 
 async def send_song(update: Update, context: ContextTypes.DEFAULT_TYPE, query: str):
     import yt_dlp
+    import imageio_ffmpeg
 
     msg = await update.message.reply_text(f"🔎 «{query}»-ро ҷустуҷӯ карда истодаам...")
     outfile_base = f"/tmp/{update.effective_user.id}_song"
+    ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
     ydl_opts = {
         "format": "bestaudio/best",
         "outtmpl": outfile_base,
+        "ffmpeg_location": ffmpeg_path,
         "postprocessors": [
             {
                 "key": "FFmpegExtractAudio",
