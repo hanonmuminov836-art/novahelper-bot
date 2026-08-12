@@ -109,6 +109,7 @@ async def send_song(update: Update, context: ContextTypes.DEFAULT_TYPE, query: s
         "format": "bestaudio/best",
         "outtmpl": outfile_base,
         "ffmpeg_location": ffmpeg_path,
+        "extractor_args": {"youtube": {"player_client": ["android"]}},
         "postprocessors": [
             {
                 "key": "FFmpegExtractAudio",
