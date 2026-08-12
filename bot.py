@@ -12,9 +12,13 @@ from telegram.ext import (
     ContextTypes,
     filters,
 )
+from groq import Groq
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8961244766:AAE26-C5Bo4ngiY-8jtq6BquqF3nJYdWrus")
-ADMIN_CHAT_ID = int(os.environ.get("ADMIN_CHAT_ID", "123456789"))
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+ADMIN_CHAT_ID = int(os.environ.get("ADMIN_CHAT_ID", "0"))
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+
+groq_client = Groq(api_key=GROQ_API_KEY)
 
 SERVICES_TEXT = (
     "📋 Хизматрасониҳои мо:\n\n"
@@ -27,7 +31,7 @@ SERVICES_TEXT = (
 ABOUT_TEXT = (
     "🤖 Ман NovaHelper ҳастам!\n\n"
     "Боти ёрдамчие, ки ба шумо дар гирифтани маълумот "
-    "ва фармоиш додан кӯмак мекунад."
+    "ва фармоиш додан кӯмак мекунад. Инчунин метавонед бо ман озод сӯҳбат кунед ё суруд пурсед!"
 )
 
 CONTACT_TEXT = (
@@ -37,8 +41,8 @@ CONTACT_TEXT = (
 )
 
 GREETING_WORDS = [
-    "салом", "ассалом", "ассалому", "салм", "хай", "hi", "hello",
-    "нағз", "чихел", "чӣ хел", "субҳ", "шаб бахайр", "рӯз хуш",
+    "салом", "ассалом", "ассалому алейкум",
+    "наѓз", "чихел", "чй хел", "субх бахайр",
 ]
 
 logging.basicConfig(
@@ -51,18 +55,20 @@ MAIN_MENU = ReplyKeyboardMarkup(
     [
         [KeyboardButton("ℹ️ Дар бораи мо"), KeyboardButton("📋 Хизматрасониҳо")],
         [KeyboardButton("🛒 Фармоиш додан"), KeyboardButton("📞 Тамос")],
+        [KeyboardButton("🎵 Мусиқӣ")],
     ],
     resize_keyboard=True,
 )
 
 waiting_for_order = set()
+waiting_for_music = set()
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     await update.message.reply_text(
         f"Салом, {user.first_name}! 👋\n\n"
-        "Хуш омадед ба NovaHelper. Аз менюи поён интихоб кунед "
+        "Хуш омадед ба NovaHelper. Аз менюи поён интихоб кунед, "
         "ё танҳо бо ман сӯҳбат кунед:",
         reply_markup=MAIN_MENU,
     )
@@ -71,6 +77,59 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def is_greeting(text: str) -> bool:
     text_lower = text.lower().strip()
     return any(word in text_lower for word in GREETING_WORDS)
+
+
+async def get_ai_reply(text: str) -> str:
+    try:
+        response = groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Ту ёрдамчии дӯстонаи NovaHelper ҳастӣ. "
+                    "Бо забони тоҷикӣ ҷавоб деҳ, кӯтоҳ, самимӣ ва мушаххас.",
+                },
+                {"role": "user", "content": text},
+            ],
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        logger.error(f"Хатогии Groq: {e}")
+        return "❌ Мутаассифона, ҳозир натавонистам ҷавоб диҳам. Дертар кӯшиш кунед."
+
+
+async def send_song(update: Update, context: ContextTypes.DEFAULT_TYPE, query: str):
+    import yt_dlp
+
+    msg = await update.message.reply_text(f"🔎 «{query}»-ро ҷустуҷӯ карда истодаам...")
+    outfile_base = f"/tmp/{update.effective_user.id}_song"
+    ydl_opts = {
+        "format": "bestaudio/best",
+        "outtmpl": outfile_base,
+        "postprocessors": [
+            {
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+                "preferredquality": "192",
+            }
+        ],
+        "default_search": "ytsearch1",
+        "noplaylist": True,
+        "quiet": True,
+    }
+    outfile = outfile_base + ".mp3"
+    try:
+        await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: yt_dlp.YoutubeDL(ydl_opts).download([query]),
+        )
+        await msg.edit_text("📤 Фиристодан...")
+        with open(outfile, "rb") as f:
+            await update.message.reply_audio(audio=f, title=query)
+        os.remove(outfile)
+    except Exception as e:
+        logger.error(f"Хатогии мусиқӣ: {e}")
+        await msg.edit_text("❌ Хатогӣ рух дод. Суруди дигареро санҷед.")
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -82,14 +141,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         waiting_for_order.discard(chat_id)
         order_msg = (
             f"🆕 Фармоиши нав!\n\n"
-            f"Аз: {user.first_name} (@{user.username or 'бе username'})\n"
+            f"Аз: {user.first_name} (@{user.username})\n"
             f"ID: {user.id}\n\n"
             f"Матн: {text}"
         )
         try:
-            await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=order_msg)
+            if ADMIN_CHAT_ID:
+                await context.bot.send_message(ADMIN_CHAT_ID, order_msg)
         except Exception as e:
-            logger.error(f"Хатогӣ ҳангоми фиристодан ба админ: {e}")
+            logger.error(f"Хатогӣ ҳангоми фиристодан ба admin: {e}")
 
         await update.message.reply_text(
             "✅ Фармоиши шумо қабул шуд! Мо ба зудӣ бо шумо тамос мегирем.",
@@ -97,11 +157,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    if chat_id in waiting_for_music:
+        waiting_for_music.discard(chat_id)
+        await send_song(update, context, text)
+        return
+
     if text == "ℹ️ Дар бораи мо":
-        await update.message.reply_text(ABOUT_TEXT, reply_markup=MAIN_MENU)
+        await update.message.reply_text(ABOUT_TEXT)
 
     elif text == "📋 Хизматрасониҳо":
-        await update.message.reply_text(SERVICES_TEXT, reply_markup=MAIN_MENU)
+        await update.message.reply_text(SERVICES_TEXT)
 
     elif text == "🛒 Фармоиш додан":
         waiting_for_order.add(chat_id)
@@ -111,21 +176,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     elif text == "📞 Тамос":
-        await update.message.reply_text(CONTACT_TEXT, reply_markup=MAIN_MENU)
+        await update.message.reply_text(CONTACT_TEXT)
+
+    elif text == "🎵 Мусиқӣ":
+        waiting_for_music.add(chat_id)
+        await update.message.reply_text("🎵 Номи суруд ё хонандаро нависед:")
 
     elif is_greeting(text):
         await update.message.reply_text(
-            f"Салом, {user.first_name}! 😊 Хушҳолам, ки шумо ҳастед. "
-            "Чӣ гуна метавонам кӯмак кунам? Аз менюи поён интихоб кунед.",
+            f"Салом, {user.first_name}! 👋\n"
+            "Чӣ гуна метавонам кӯмак кунам?",
             reply_markup=MAIN_MENU,
         )
 
     else:
-        await update.message.reply_text(
-            "Мутаассифона, ман ин паёмро нафаҳмидам 🤔\n"
-            "Лутфан аз менюи поён интихоб кунед ё «салом» гӯед!",
-            reply_markup=MAIN_MENU,
-        )
+        reply = await get_ai_reply(text)
+        await update.message.reply_text(reply)
 
 
 flask_app = Flask(__name__)
@@ -133,7 +199,7 @@ flask_app = Flask(__name__)
 
 @flask_app.route("/")
 def home():
-    return "NovaHelper бот кор карда истодааст! ✅"
+    return "NovaHelper бот кор карда истодааст!"
 
 
 def run_flask():
