@@ -31,7 +31,7 @@ SERVICES_TEXT = (
 ABOUT_TEXT = (
     "🤖 Ман NovaHelper ҳастам!\n\n"
     "Боти ёрдамчие, ки ба шумо дар гирифтани маълумот "
-    "ва фармоиш додан кӯмак мекунад. Инчунин метавонед бо ман озод сӯҳбат кунед ё суруд пурсед!"
+    "ва фармоиш додан кӯмак мекунад. Инчунин метавонед бо ман озод сӯҳбат кунед!"
 )
 
 CONTACT_TEXT = (
@@ -55,13 +55,11 @@ MAIN_MENU = ReplyKeyboardMarkup(
     [
         [KeyboardButton("ℹ️ Дар бораи мо"), KeyboardButton("📋 Хизматрасониҳо")],
         [KeyboardButton("🛒 Фармоиш додан"), KeyboardButton("📞 Тамос")],
-        [KeyboardButton("🎵 Мусиқӣ")],
     ],
     resize_keyboard=True,
 )
 
 waiting_for_order = set()
-waiting_for_music = set()
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -98,44 +96,6 @@ async def get_ai_reply(text: str) -> str:
         return "❌ Мутаассифона, ҳозир натавонистам ҷавоб диҳам. Дертар кӯшиш кунед."
 
 
-async def send_song(update: Update, context: ContextTypes.DEFAULT_TYPE, query: str):
-    import yt_dlp
-    import imageio_ffmpeg
-
-    msg = await update.message.reply_text(f"🔎 «{query}»-ро ҷустуҷӯ карда истодаам...")
-    outfile_base = f"/tmp/{update.effective_user.id}_song"
-    ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
-    ydl_opts = {
-        "format": "bestaudio/best",
-        "outtmpl": outfile_base,
-        "ffmpeg_location": ffmpeg_path,
-        "extractor_args": {"youtube": {"player_client": ["android"]}},
-        "postprocessors": [
-            {
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": "mp3",
-                "preferredquality": "192",
-            }
-        ],
-        "default_search": "ytsearch1",
-        "noplaylist": True,
-        "quiet": True,
-    }
-    outfile = outfile_base + ".mp3"
-    try:
-        await asyncio.get_event_loop().run_in_executor(
-            None,
-            lambda: yt_dlp.YoutubeDL(ydl_opts).download([query]),
-        )
-        await msg.edit_text("📤 Фиристодан...")
-        with open(outfile, "rb") as f:
-            await update.message.reply_audio(audio=f, title=query)
-        os.remove(outfile)
-    except Exception as e:
-        logger.error(f"Хатогии мусиқӣ: {e}")
-        await msg.edit_text("❌ Хатогӣ рух дод. Суруди дигареро санҷед.")
-
-
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     user = update.effective_user
@@ -161,11 +121,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    if chat_id in waiting_for_music:
-        waiting_for_music.discard(chat_id)
-        await send_song(update, context, text)
-        return
-
     if text == "ℹ️ Дар бораи мо":
         await update.message.reply_text(ABOUT_TEXT)
 
@@ -181,10 +136,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif text == "📞 Тамос":
         await update.message.reply_text(CONTACT_TEXT)
-
-    elif text == "🎵 Мусиқӣ":
-        waiting_for_music.add(chat_id)
-        await update.message.reply_text("🎵 Номи суруд ё хонандаро нависед:")
 
     elif is_greeting(text):
         await update.message.reply_text(
